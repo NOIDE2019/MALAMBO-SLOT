@@ -75,7 +75,7 @@ export function LeverRight({ disabled, onPulled }) {
       style={{
         position: "absolute",
         right: 8,
-        top: 105,
+        top: 20,
         width: 84,
         height: 280,
         touchAction: "none",
