@@ -5,30 +5,34 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function LeverRight({ disabled, onPulled }) {
   const wrapRef = useRef(null);
-  const [dragging, setDragging] = useState(false);
-  const [pull, setPull] = useState(0); // 0..maxPull
-  const firedRef = useRef(false);
 
-  const maxPull = 130;
-  const threshold = Math.round(maxPull * 0.72);
+  const maxPull = 180;     // recorrido total
+  const fireAt = maxPull;  // DISPARA solo cuando llega abajo del todo
+
+  const [dragging, setDragging] = useState(false);
+  const [pull, setPull] = useState(0);      // 0..maxPull
+  const [locked, setLocked] = useState(false); // bloquea mientras “clack” + retorno
+  const firedRef = useRef(false);
 
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
 
     const onMove = (e) => {
-      if (!dragging || disabled) return;
+      if (!dragging || disabled || locked) return;
       e.preventDefault();
 
       const startY = Number(wrap.dataset.startY || e.clientY);
       const dy = e.clientY - startY;
-      const next = clamp(dy, 0, maxPull);
 
+      // vertical puro
+      const next = clamp(dy, 0, maxPull);
       setPull(next);
 
-      if (!firedRef.current && next >= threshold) {
+      // feedback leve cuando llega al fondo
+      if (!firedRef.current && next >= fireAt) {
         firedRef.current = true;
-        if (navigator.vibrate) navigator.vibrate(18);
+        if (navigator.vibrate) navigator.vibrate(25);
       }
     };
 
@@ -36,24 +40,31 @@ export function LeverRight({ disabled, onPulled }) {
       if (!dragging) return;
       setDragging(false);
 
-      const success = pull >= threshold;
-
-      if (success && !disabled) {
-        setPull(maxPull);
-        await wait(70);
-        onPulled?.();
-        await wait(160);
+      // si no llegó al fondo, vuelve arriba y NO dispara
+      if (pull < fireAt || disabled) {
+        setPull(0);
+        firedRef.current = false;
+        cleanupPointer(wrap);
+        return;
       }
 
-      setPull(0);
-      firedRef.current = false;
+      // si llegó al fondo: clack, dispara 1 vez, vuelve sola
+      setLocked(true);
 
-      try {
-        const pid = Number(wrap.dataset.pointerId || "NaN");
-        if (!Number.isNaN(pid)) wrap.releasePointerCapture?.(pid);
-      } catch {}
-      wrap.dataset.pointerId = "";
-      wrap.dataset.startY = "";
+      // “tope” duro: se queda abajo un instante
+      setPull(maxPull);
+      await wait(90);
+
+      onPulled?.(); // dispara el giro
+
+      // vuelve arriba con resorte (un poquito más lento)
+      await wait(140);
+      setPull(0);
+
+      await wait(160);
+      setLocked(false);
+      firedRef.current = false;
+      cleanupPointer(wrap);
     };
 
     window.addEventListener("pointermove", onMove, { passive: false });
@@ -65,9 +76,7 @@ export function LeverRight({ disabled, onPulled }) {
       window.removeEventListener("pointerup", onEnd);
       window.removeEventListener("pointercancel", onEnd);
     };
-  }, [dragging, disabled, pull, threshold, maxPull, onPulled]);
-
-  const angle = (pull / maxPull) * 24;
+  }, [dragging, disabled, locked, pull]);
 
   return (
     <div
@@ -77,7 +86,7 @@ export function LeverRight({ disabled, onPulled }) {
         right: 8,
         top: 20,
         width: 84,
-        height: 280,
+        height: 320,
         touchAction: "none",
         userSelect: "none",
         WebkitUserSelect: "none",
@@ -86,70 +95,84 @@ export function LeverRight({ disabled, onPulled }) {
       }}
       aria-hidden="true"
     >
+      {/* Riel */}
       <div
         style={{
           position: "absolute",
-          right: 8,
-          top: 8,
-          width: 70,
-          height: 250,
-          transformOrigin: "50% 18%",
-          transform: `rotate(${angle}deg)`,
-          transition: dragging ? "none" : "transform 220ms cubic-bezier(.2,.9,.2,1)",
+          right: 26,
+          top: 18,
+          width: 12,
+          height: 260,
+          borderRadius: 999,
+          background: "rgba(255,255,255,.10)",
+          boxShadow: "inset 0 0 0 1px rgba(0,0,0,.25)",
+        }}
+      />
+
+      {/* Varilla (opcional, para que parezca más real) */}
+      <div
+        style={{
+          position: "absolute",
+          right: 31,
+          top: 18,
+          width: 2,
+          height: 260,
+          background: "rgba(0,0,0,.25)",
+        }}
+      />
+
+      {/* Perilla draggable */}
+      <div
+        onPointerDown={(e) => {
+          if (disabled || locked) return;
+          const wrap = wrapRef.current;
+          if (!wrap) return;
+
+          setDragging(true);
+          wrap.dataset.pointerId = String(e.pointerId);
+          wrap.dataset.startY = String(e.clientY);
+          wrap.setPointerCapture?.(e.pointerId);
+        }}
+        style={{
+          position: "absolute",
+          right: 10,
+          top: 18,
+          width: 44,
+          height: 44,
+          borderRadius: 999,
+          background: locked ? "#8b1515" : "#b51e1e",
+          boxShadow: "0 10px 18px rgba(0,0,0,.35)",
+          cursor: disabled || locked ? "not-allowed" : "grab",
+          touchAction: "none",
+          transform: `translate3d(0, ${pull}px, 0)`,
+          transition: dragging
+            ? "none"
+            : "transform 260ms cubic-bezier(.18,.95,.22,1)",
           willChange: "transform",
         }}
-      >
-        <div
-          onPointerDown={(e) => {
-            if (disabled) return;
-            const wrap = wrapRef.current;
-            if (!wrap) return;
+      />
 
-            setDragging(true);
-            wrap.dataset.pointerId = String(e.pointerId);
-            wrap.dataset.startY = String(e.clientY);
-            wrap.setPointerCapture?.(e.pointerId);
-          }}
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: 0,
-            width: 44,
-            height: 44,
-            transform: "translateX(-50%)",
-            borderRadius: 999,
-            background: "#b51e1e",
-            boxShadow: "0 10px 18px rgba(0,0,0,.35)",
-            cursor: disabled ? "not-allowed" : "grab",
-            touchAction: "none",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: 30,
-            width: 12,
-            height: 185,
-            transform: "translateX(-50%)",
-            borderRadius: 999,
-            background: "rgba(255,255,255,.22)",
-            boxShadow: "inset 0 0 0 1px rgba(0,0,0,.15)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: 210,
-            width: 22,
-            height: 22,
-            transform: "translateX(-50%)",
-            borderRadius: 999,
-            background: "rgba(0,0,0,.25)",
-          }}
-        />
-      </div>
+      {/* Base abajo */}
+      <div
+        style={{
+          position: "absolute",
+          right: 21,
+          top: 290,
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          background: "rgba(0,0,0,.22)",
+        }}
+      />
     </div>
   );
+}
+
+function cleanupPointer(wrap) {
+  try {
+    const pid = Number(wrap.dataset.pointerId || "NaN");
+    if (!Number.isNaN(pid)) wrap.releasePointerCapture?.(pid);
+  } catch {}
+  wrap.dataset.pointerId = "";
+  wrap.dataset.startY = "";
 }
